@@ -1,6 +1,8 @@
--- Review this against the actual Assignment 4 schema before running it.
--- It expects public."USER", public."FILE" and public."STORAGE" with the columns
--- shown in the submitted ER diagram. Existing rows are kept.
+-- Secure Home Cloud: connect the existing Assignment 4 tables to Supabase Auth.
+-- Based on the CREATE TABLE statements in the submitted Assignment 4 PDF.
+-- Existing assignment rows are kept. Run once in Supabase SQL Editor.
+
+begin;
 
 alter table public."USER" add column if not exists auth_uid uuid;
 create unique index if not exists user_auth_uid_unique on public."USER" (auth_uid);
@@ -12,14 +14,14 @@ values ('home-files', 'home-files', false, 52428800)
 on conflict (id) do update set public = false, file_size_limit = 52428800;
 
 insert into public."STORAGE" (storage_name, total_space_bytes, free_space_bytes, status)
-select 'Supabase Demo Storage', 0, 0, 'demo'
+select 'Supabase Demo Storage', 52428800, 52428800, 'online'
 where not exists (select 1 from public."STORAGE" where storage_name = 'Supabase Demo Storage');
 
 create or replace function public.app_ensure_user()
 returns bigint
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare result_id bigint;
 begin
@@ -39,7 +41,7 @@ returns bigint
 language sql
 stable
 security definer
-set search_path = public
+set search_path = ''
 as $$
   select user_id from public."USER" where auth_uid = auth.uid() limit 1;
 $$;
@@ -51,7 +53,7 @@ returns jsonb
 language sql
 stable
 security invoker
-set search_path = public
+set search_path = ''
 as $$
   select jsonb_build_object(
     'total_files', count(*),
@@ -73,7 +75,8 @@ using (user_id = public.app_user_id());
 drop policy if exists "app files add" on public."FILE";
 create policy "app files add" on public."FILE" for insert to authenticated
 with check (user_id = public.app_user_id()
-  and storage_id = (select storage_id from public."STORAGE" where storage_name = 'Supabase Demo Storage' limit 1));
+  and storage_id = (select storage_id from public."STORAGE" where storage_name = 'Supabase Demo Storage' limit 1)
+  and split_part(storage_path, '/', 1) = auth.uid()::text);
 drop policy if exists "app files rename" on public."FILE";
 create policy "app files rename" on public."FILE" for update to authenticated
 using (user_id = public.app_user_id()) with check (user_id = public.app_user_id());
@@ -84,7 +87,9 @@ drop policy if exists "app storage info" on public."STORAGE";
 create policy "app storage info" on public."STORAGE" for select to authenticated
 using (storage_name = 'Supabase Demo Storage');
 
-grant select, insert, update, delete on public."FILE" to authenticated;
+grant select, insert, delete on public."FILE" to authenticated;
+revoke update on public."FILE" from authenticated;
+grant update (file_name) on public."FILE" to authenticated;
 grant select on public."STORAGE" to authenticated;
 do $$
 declare seq_name text;
@@ -107,3 +112,6 @@ using (bucket_id = 'home-files' and (storage.foldername(name))[1] = auth.uid()::
 -- If the old tables already have broad policies, inspect and tighten them.
 -- PostgreSQL combines permissive policies with OR, so an old broad policy
 -- could override the intended per-user restriction above.
+
+commit;
+notify pgrst, 'reload schema';

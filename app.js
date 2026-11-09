@@ -155,12 +155,23 @@ async function showSession(user) {
   $('account').hidden = !user;
   $('email').textContent = user?.email || '';
   if (!user) { databaseUserId = null; files = []; return; }
+  $('uploadButton').disabled = true;
   const account = await supabase.rpc('app_ensure_user');
-  if (account.error) { message('appMessage', friendlyError(account.error)); return; }
+  if (account.error) {
+    const missingSetup = account.error.message?.includes('app_ensure_user');
+    message('appMessage', missingSetup
+      ? 'Database setup is missing. Run supabase-setup.sql in Supabase SQL Editor, then refresh this page.'
+      : friendlyError(account.error));
+    return;
+  }
   databaseUserId = account.data;
   const storage = await supabase.from('STORAGE').select('storage_id').eq('storage_name', 'Supabase Demo Storage').single();
-  if (storage.error) { message('appMessage', friendlyError(storage.error)); return; }
+  if (storage.error) {
+    message('appMessage', 'Storage setup is missing. Run supabase-setup.sql in Supabase SQL Editor, then refresh this page.');
+    return;
+  }
   storageId = storage.data.storage_id;
+  $('uploadButton').disabled = false;
   await loadFiles();
 }
 
